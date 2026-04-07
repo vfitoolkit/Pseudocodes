@@ -1,0 +1,80 @@
+\subsection{Stationary Agent Distribution in Infinite Horizon}
+There are three was to compute the stationary agent distribution in infinite horizon models. The stationary agent definition is defined as $\mu(a,z)$ satisfying $\mu(a',z')=P(a',z'|a,z) \mu(a,z)$, where $P$ is the markov transition kernel that combines the policy function $g(a'|a,z)$ with the exogenous shock transition kernel $\pi_z(z'|z)$ ($P=g \circ \pi_z$).
+
+The three ways to compute the stationary agent distribution are (i) as the eigenvector of $\mu = P \mu$, (ii) by simulation, and (iii) by iteration.
+
+Which of the three to use? The iteration method is the default as it has a better combination of speed and accuracy than the simulation method. However the iteration method does require more memory and so for large models it is not an option; if you are getting out of memory errors when solving for the agent distribution then turn off iteration by setting \textit{simoptions.iterate=0} and the toolkit will instead use the simulation. The eigenvecter method is unstable so is never used.
+
+\subsubsection{Stationary Agent Distribution as Eigenvector}
+In principle this is simple, we know the stationary distribution is defined as satisfying $\mu = P \mu$, and once the problem is discretized $P$ is a matrix. So $\mu$ is just an eigenvector of the matrix $P$ and there are plenty of routines existing for finding eigenvectors in all standard software and they are very fast. In practice however the method is unstable as minor numerical rounding errors in computing the eigenvector mean it often contains negative elements. There are ways to 'bend' the eigenvector so that it is a probability distribution (all elements are positive, sum to one) as given, e.g., 'Step 5' on page 178 of \cite*{BadshahBeaumontSrivastava2013} describes how to find the normalized eigenvector of the unit eigenvalue of $P$ and use the Perron-Frobenius theorem to 'bend' it.
+
+By default the toolkit will avoid the eigenvector approach due to the instability (if you want to use the eigenvector method, set \textit{simoptions.eigenvector=1}. Neither of the ways to 'bend' it have been implemented (if you want to contribute one, please do :)
+
+\subsubsection{Simulate Agent Distribution}
+We have a markov process $P$ (on the joint space of the endogenous and exogenous states). We know from econometric theory that if we simulate a single time series using $P$ then asymptotically the distribution of this time series will convergence to what we are calling the stationary distribution $\mu = P \mu$.
+
+Two minor points are needed to implement this. First, we have to start from somewhere, and we don't one the point we start from to matter, so we do 'burnin': simulate for $B$ periods, throw these away except for where we end up, and now use this as the starting point for simulating our distribution (because the starting point is random it will not matter on average; it is also likely to be a 'typical' point). Second, simulating a single time series is slow, so in practice we simulate lots of time series in parallel on the cpu; while this is not in line with the underlying theory justifying the approach it works just fine in practice.
+
+The pseudocode for simulating the agent distribution follows. Note everything is done based on the index of $(a,z)$, not the value.
+\begin{algorithmic}
+ \State We will simulate $M$ observations. Done as $N$ simulations of length $T$ ($M=N \times T$)
+ \For $i$ count from $1$ to $N$ (Parallel-for over cpu cores)
+  \State Choose starting point $(a_0,z_0)$
+  \State Create $Dist_i=zeros($\textit{size of $(a,z)$ space}$)$
+  \For $t$ counts from $1$ to $B+1$ \Comment $B$ is number of periods for burnin
+   \State Draw new $(a_t,z_t)$ from $P(a',z'|a_{t-1},z_{t-1})$
+   \EndFor
+  \For $t$ counts from $B+1$ to $T$ \Comment Same as during burnin, but now we will keep them
+   \State Draw new $(a_t,z_t)$ from $P(a',z'|a_{t-1},z_{t-1})$
+   \State $Dist_i(a_t, z_t)=Dist_i(a_t, z_t)+1$ (recall, using indexes, not values)
+  \EndFor
+  \State $Dist(:,i)=Dist_i$ \Comment Put the $Dist_i$ together
+ \EndFor
+ \State $Dist=sum(Dist,$in the $i$ dimension$)$
+ \Comment $Dist$ is now a count of how many times each point in distribution was visited during the simulations
+ \State $Dist=Dist/sum(Dist)$
+ \Comment Normalize to be a probability distribution
+ \\ \Return $Dist$
+\end{algorithmic}
+the implementation in VFI Toolkit uses the mid-point of the grids on $(a,z)$ as the initial starting point $(a_0,z_0)$ for all simulations (it will anyway be burned away). This can be controlled setting \textit{simoptions.seedpoint} (which has default value of the mid-point of the grids on $(a,z)$.
+
+\subsubsection{Iterate Agent Distribution}
+If we start from some initial guess for agent distribution $\mu_0$, and iterate $\mu_t=P \mu_{t-1}$, we know from the theory that this sequence of $\mu_t$ will converge to the stationary distribution $\mu$.\footnote{Typically $P$ is either a 'stochastic contraction' or, more likely for incomplete markets models, satisfies a 'monotone mixing condition' (or 'splitting condition', or 'monotone order-mixing condition') and either of these means the sequence will converge. Actually analytically proving either of these is non-trivial but has been done for some of the more basic/standard heterogenous agent incomplete market models.}
+
+Iteration just repeatedly iterates until convergence, so psuedocode is just
+\begin{algorithmic}
+ \State Start from initial guess $\mu_{old}$
+ \While {currdist$>$tolerance}
+  \State $\mu=P \mu_{old}$ \Comment Iterate agent distribution
+  \State $currdist=max(abs(\mu-\mu_{old}))$
+  \State $\mu_{old}=\mu$ \Comment Update 'old'
+ \EndWhile
+ \\ \Return $\mu$ \Comment The distribution once convergence was reached
+\end{algorithmic}
+This just leaves the question of what to use as the initial guess $\mu_{old}$. By default VFI Toolkit just put equal weight on every grid point as the initial guess for $\mu_{old}$. You can give an initial guess for $\mu_{old}$ as \textit{simoptions.initialdist} (if guess is good, codes will run faster).\footnote{The toolkit used to use a small simulation as the initial guess, but the Tan improvement made the iteration so fast that getting a good initial guess was no longer worth the run time involved.}
+
+The code implementing this contains one trick to speed it up, namely that it computes $\mu=P \mu_{old}$ multiple times before calculating $currdist$; because the distance calculation is non-trivial it is costly to compute it every step. This is controlled by \textit{simoptions.multiiter} which is set to 50 by default.
+
+To avoid the risk of just iterating forever if the agent distribution is failing to converge, the codes impose a maximum number of iterations (it is an additional criterion of the while loop). This is controlled by \textit{simoptions.maxit} and is set to 50,000 by default.
+
+You can control 'tolerance' by setting $simoptions.tolerance$.
+
+\subsubsection{Tan Improvement to Iterating Agent Distribution}
+By default VFI Toolkit will perform the 'Tan improvement' \cite*{Tan2020} to iteration which we now describe. In standard iteration we use the transition matrix $P$, which is the composition of the policy function $g(a'|a,z)$ and the transition matrix for the exogenous state $\pi_z(z'|z)$; $P=g \circ \pi_z$. The Tan improvement is the clever observation that actually instead of doing the iteration as $\mu=P \mu_{old}$, we can actually do it as a two-step process, with the first step being $\tilde{\mu}=\Gamma \mu_{old}$ and the second step is $\mu=\pi_z \tilde{\mu}$; where $\Gamma$ is just $g$ but as a transition from $(a,z)$ to $(a',z)$ rather than just to $a$ (notice that both $P$ and $\Gamma$ go from $(a,z)$, but $P$ goes to $(a',z')$ while $\Gamma$ goes to $(a',z)$). Conceptually this seems pointless, but computationally $\Gamma$ is very \textit{sparse} and so the Tan improvement is both vastly faster and uses less memory than standard iteration.
+
+The pseudocode for iteration with the Tan improvement is thus,
+\begin{algorithmic}
+ \State Start from initial guess $\mu_{old}$
+ \State Compute $\Gamma$ from $g$
+ \While {currdist$>$tolerance}
+  \State $\mu=\Gamma \mu_{old}$ \Comment First step of Tan improvement
+  \State $\mu=\pi_z \mu$ \Comment Second step of Tan improvement
+  \State $currdist=max(abs(\mu-\mu_{old}))$
+  \State $\mu_{old}=\mu$ \Comment Update 'old'
+ \EndWhile
+ \\ \Return $\mu$ \Comment The distribution once convergence was reached
+\end{algorithmic}
+There is some reshaping of matrices involved in the Tan improvement that I have glossed over here, for a full explanation see \cite{Tan2020}. As in standard iteration our implementation does not check the $currdist$ every iteration as it is faster not to.
+
+Because the Tan improvement makes the iteration step so much faster it is no longer worth generating a decent initial guess for $\mu_{old}$, and so the default just puts all the mass for the endogenous state on the mid-point of the grid, and for the exogenous state it iterates ten times with $\pi_z$ from putting equal mass on all grid points. You can give an initial guess for $\mu_{old}$ as \textit{simoptions.initialdist} (if guess is good, codes will run faster).
+

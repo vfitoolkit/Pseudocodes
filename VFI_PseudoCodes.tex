@@ -1,0 +1,179 @@
+\documentclass[11pt,fleqn]{article}
+% \documentclass[smallextended]{svjour3}
+
+\textheight=23.3cm 
+\textwidth=16.5cm 
+\topmargin=-15mm 
+\oddsidemargin=0cm 
+
+\usepackage{enumerate}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{bbm}
+\usepackage{ulem}
+\usepackage{graphicx}
+%This package is dated and it is giving me problems
+%\usepackage{subfig}
+\usepackage{wrapfig}
+\usepackage{pdflscape}
+\usepackage[sidewaysfigure]{rotating}
+\usepackage{natbib}
+%\usepackage{amsthm}
+%\usepackage{setspace}
+\usepackage{multirow}
+\newcommand{\tb}{\hspace*{3mm}}
+\bibpunct{(}{)}{;}{a}{,}{,}
+\parskip=3mm 
+\parindent=5mm 
+\baselineskip=17pt
+
+\usepackage{amsthm}
+\newtheorem{assumption}{Assumption}
+\newtheorem{definition}{Definition}
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}{Corollary}
+\newtheorem{lemma}{Lemma}
+\newtheorem{theorem}{Theorem}
+\renewcommand{\qedsymbol}{\textit{Q.E.D.}}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\usepackage{algpseudocode}
+\usepackage{algorithm}
+\renewcommand\algorithmicthen{}
+\renewcommand\algorithmicdo{}
+
+\usepackage{hyperref}
+\hypersetup{
+  pdftitle={Semi-Endogenous Shocks},    % title
+  pdfauthor={Robert Kirkby},     % author
+  %hyperfootnotes=false,
+  %hyperindex=true,
+  %hyperfigures=true,  
+  colorlinks=true,                % makes links a coloured word, rather than putting coloured boxes around them
+  linkcolor=black,                % makes internal links black
+  citecolor=black,                % makes citations black
+  urlcolor=blue,                 % color of external links
+  breaklinks=true                 % allow links to be brocken across multiple lines      
+}
+
+
+\begin{document}
+
+
+%===============================
+\newcommand{\rob}[1]{{\noindent\color{blue}\bf #1}}
+\newcommand{\robc}[1]{{\noindent\color{blue}\bf R: #1}}
+%===============================
+
+\title{VFI Toolkit: Pseudocodes}
+\author{Robert Kirkby\thanks{Kirkby: Victoria University of Wellington.
+Please address all correspondence about this article to Robert Kirkby at $<$robertdkirkby@gmail.com$>$,
+\href{http://www.robertdkirkby.com}{robertdkirkby.com}, \href{http://www.vfitoolkit.com}{vfitoolkit.com}.
+}} % \\ {\small Victoria University of Wellington}}
+% \author{Robert Kirkby \thanks{I thank}}
+% \institute{Victoria University of Wellington, \email{robertdkirkby@gmail.com},
+% \href{http://www.robertdkirkby.com}{robertdkirkby.com}.}
+\date{\today}
+\maketitle
+
+% \noindent {\bf Keywords:} Value function iteration, Semi-endogenous shocks.
+
+% \noindent {\bf JEL Classification:} E00; C68; C63; C62
+
+\thispagestyle{empty}
+
+%==============================================================================
+\newpage
+{
+\small
+\parskip=0cm
+\parindent=0cm
+\tableofcontents
+}
+%==============================================================================
+
+
+\newpage
+\baselineskip=17pt
+\setcounter{page}{1}
+
+\section{Introduction}
+This document presents pseudocodes for various commands from VFI Toolkit. The actual implementations in VFI Toolkit often involve parallelized versions of the psuedocodes presented here, and also typically have options to use more-or-less parallelization (versus looping).
+
+This document is a work-in-progress. Please request pseudocode for any specific command you want to see it for (either by email or on discourse.vfitoolkit.com).
+
+Throughout I use the standard notation of VFI Toolkit: so $d$ is a decision variable, $a$ is endogenous state (and $a'$ the next-period endogenous state), $z$ is a markov exogenous state, $e$ is an i.i.d. exogenous state, $u$ is an i.i.d. shock that occurs between periods. The transition probability from current exogenous state $z$ to next-period exogenous state $z'$ is denoted by $\pi_z(z,z')$. $V$ is the value function. For finite horizon problems there are $N_j$ periods, indexed by $j$.
+
+Throughout, $D(\cdot)$ denotes the set of feasible choices conditional on the current states.
+
+In many psuedocodes $g(a,z)$ denotes a policy, with $g^d(a,z)$ being the policy for the decision variables and $g^{a'}(a,z)$ being the policy for the next-period endogenous state.
+
+\section{Value Function Iteration: Solving for V and Policy}
+
+\input{./Sections/VFI_InfHorz.tex}
+
+\input{./Sections/VFI_FHorz.tex}
+
+\section{Agent Distribution}
+
+\input{./Sections/AgentDist_InfHorz.tex}
+
+\input{./Sections/AgentDist_FHorz.tex}
+
+
+\section{Stationary General Equilibrium}
+To solve for a stationary general equilibrium, we are looking for some parameters that are determined in general equilibrium, call them $\theta$ such that our general equilibrium equations equal zero, $GEeqn(\theta)=0$.
+
+There are various algorithms for doing this (\textit{heteroagentoptions.fminalgo} determines which is used), but all of them essentially boil down to the following,
+\begin{algorithmic}
+ \State Guess some initial $\theta^0$
+ \State Define $GeneralEqmConditions=\infty$
+ \While $GeneralEqmConditions>tolerance$
+ \State Solve the value fn and policy (given current $\theta^k$)
+ \State Solve the agent distribution (given current $\theta^k$ and policy we just found)
+ \State Solve the aggregate variables at each $t$ (given current $\theta^k$ and policy/agent dist we just found)
+ \State Evaluate $GeneralEqmConditions=GEeqn(AggVars,\theta^k)$ (given current $\theta^k$ and agg vars)
+ \State Update $\theta^{k+1}$ (in some way, likely based on $\theta^k$ and $GeneralEqmConditions$)
+ \EndWhile
+ \\ \Return $\theta$
+\end{algorithmic}
+The difference between the different \textit{fminalgo} is how we update the $\theta$. Note that in almost all of the \textit{fminalgo} the while loop is being done by an optimization algorithm (like Matlab's \textit{fminsearch()}).
+
+Whether the problem is finite or infinite-horizon value functions, and whether or not there are permanent types of different kinds of shocks is unimportant, in the sense that the above steps are all the same steps, just that the details of their implementation is changed.
+
+When there are multiple general equilibrium equations, $GeneralEqmConditions$ is (by default) defined as the sum-of-squares of the individual general equilibrium equations.
+
+
+\section{Transition Path General Equilibrium}
+We consider a transition path of length $T$ time periods. Solving for a transition path general equilibrium, we are looking for some path-of-parameters that are determined in general equilibrium, call them $\Theta$ such that our general equilibrium equations equal zero in every time period, $GEeqn(\Theta)=0$. Note that at some level this is the same thing we did for a stationary equilibrium, except that now $\Theta=\{\theta_1,....,\theta_T\}$ is a time-path of general-eqm parameters, rather than just parameters at a single point in time.
+
+There are various algorithms for doing this (\textit{heteroagentoptions.fminalgo} determines which is used), but all of them essentially boil down to the following,
+\begin{algorithmic}
+ \State Guess some initial $\Theta^0$ (time-path on general-equilibrium parameters)
+ \State Define $GeneralEqmConditions=\infty$
+ \While $GeneralEqmConditions>tolerance$
+ \State Solve backward, $t=T-1,\dots,2,1$ for the value fn and policy at each $t$ (given current $\theta^k_t$)
+ \State Solve forward, $t=1,2,\dots,T$ for the agent distribution (given current $\theta^k_t$ and $Policy_t$ we just found)
+ \State Solve the aggregate variables (given current $\theta_t^k$ and policy/agent dist we just found for $t$)
+ \State Evaluate $GeneralEqmConditions=[GEeqn_1(AggVars_1,\theta_1^k),$ $GEeqn_1(AggVars_1,\theta_1^k),$$\dots,$ $GEeqn_T(AggVars_T,\theta_T^k)]$ (evaluate general eqm eqns at each time period)
+ \State Update $\Theta^{k+1}$ (in some way, likely based on $\Theta^k$ and $GeneralEqmConditions$)
+ \EndWhile
+ \\ \Return $\theta$
+\end{algorithmic}
+The difference between the different \textit{fminalgo} is how we update the $\Theta$. The most common way to update is as a shooting algorithm.
+
+In a stationary equilibrium, parameters other than those parameters which were being determined in general equilibrium (the general equilibrium parameters) were all constant (in time) and kept in Parameters structure. When we solve transition paths, some parameters might vary over time, and this is done with the ParamPath (a path on exogenous parameters), while any other parameters not in this path are assumed to be constant at their values in Parameters structure. It is not described in algorithm above, but obviously we have to make sure to use the correct parameters in each time period.
+
+It is important to solve backward for policy and forward for agent distribution. For convenience, aggregate variables and general eqm conditions are often solved forwards while doing agent distribution, but in principle how we deal with these (in terms of timing) is not important is most models (can be important if we use lagged/leading parameter values for something).
+
+Whether the problem is finite or infinite-horizon value functions, and whether or not there are permanent types of different kinds of shocks is unimportant, in the sense that the above steps are all the same steps, just that the details of their implementation is changed.
+
+
+
+\nocite{VFIToolkit}
+\bibliographystyle{plainnat}
+\bibliography{VFI_PseudoCodes_refs}
+
+\end{document}

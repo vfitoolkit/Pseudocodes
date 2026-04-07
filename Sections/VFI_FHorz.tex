@@ -1,0 +1,279 @@
+\subsection{Finite Horizon: decision variable, markov shock}
+The basic algorithm is simple backward iteration. Let $\Theta$ be the full set of model parameters, and let $\theta_j$ be the values of those parameters that are relevant in period $j$.\footnote{So if a parameter is independent of age, then it appears unchanged in $\theta_j$. If a parameter depends on age, then $\theta_j$ contains only the value relevant at age $j$.}
+\begin{algorithmic}
+ \State Solve for final period, $N_j$: $V_{N_j}(a,z)=\max_{d,a' \in D(a,z)} F(d,a',a,z) $
+ \State ... and keep the $\argmax$ $g_{N_j}$.
+ \For $j$ count backward from $N_j-1$ to $1$
+   \State Get $\theta_j$ from $\Theta$
+   \For All values of $z$
+    \State Calculate $E[V_{j+1}(a',z')|z]=\sum_{z'} V_{j+1}(a',z') \pi_z(z,z')$
+    \For All values of $a$
+     \State Calculate $V_j(a,z)=\max_{d,a' \in D(a,z)} \left\{ F(d,a',a,z)+\beta E[V_{j+1}(a',z')|z] \right\}$
+     \State ... and keep the $\argmax$ $g_j(a,z)$.
+     \EndFor
+   \EndFor
+  \EndFor
+   \\ \Return $[V_1,V_2,...,V_{N_j}]$, $[g_1,g_2,...,g_{N_j}]$
+\end{algorithmic}
+
+If you were writing custom code for a specific problem, you would likely try to exploit features such as monotonicity. However, because VFI Toolkit is designed to solve generic problems, it uses this simple and robust approach.
+
+\subsubsection{Finite Horizon: grid interpolation layer}
+Grid interpolation layer adds a second layer of points for the next-period endogenous state. The first layer is the original grid on $a'$, while the second layer places $n2$ evenly spaced points between adjacent first-layer grid points. This follows closely the pseudocode in \textit{GridInterpLayer.pdf}, but here we describe the case with one endogenous state, one decision variable, and one markov shock, matching the standard finite-horizon problem above.
+
+Let $a\_{}grid=\{a_1,\dots,a_n\}$ be the grid on assets. The fine grid used by the second layer is
+\[
+aprime\_{}grid=\texttt{interp1}(1\!:\!1\!:\!n,\;a\_{}grid,\;\texttt{linspace}(1,n,n+n2*(n-1))).
+\]
+This is the grid that contains the original $n$ first-layer points together with the $n2$ evenly spaced points between each adjacent pair of first-layer points.
+
+\begin{algorithmic}
+ \State For final period, $N_j$, set $E[V_{N_j+1}(a',z')|z]=0$
+ \For $j$ count backward from $N_j$ to $1$
+   \State Get $\theta_j$ from $\Theta$
+   \For All values of $z$
+    \If{$j<N_j$}
+     \State Calculate $E[V_{j+1}(a',z')|z]=\sum_{z'} V_{j+1}(a',z') \pi_z(z,z')$
+    \Else
+     \State $E[V_{j+1}(a',z')|z]=0$
+    \EndIf
+    \State Interpolate $E[V_{j+1}(a',z')|z]$ from $a\_{}grid$ onto $aprime\_{}grid$ to get $\widehat{E[V_{j+1}]}(\tilde{a}',z)$
+    \For All values of $a$
+     \Statex \textit{First Layer}
+     \For All values of $d$
+      \State Solve for the optimal $a'$ on the first-layer grid:
+      \Statex \hspace{\algorithmicindent} $g_j^1(d,a,z)=\argmax_{i=1,\dots,n} \left\{ F(d,a\_{}grid(i),a,z)+\beta E[V_{j+1}(a\_{}grid(i),z')|z] \right\}$
+      \State Let $midpoint_j(d,a,z)=\max(\min(g_j^1(d,a,z),n-1),2)$
+     \EndFor
+     \Statex \textit{Second Layer}
+     \For All values of $d$
+      \State Create the second-layer grid around the first-layer midpoint:
+      \Statex \hspace{\algorithmicindent} $aprimeindexes_j(d,a,z)=(midpoint_j+(midpoint_j-1)*n2)+(-n2-1:1:1+n2)$
+      \Statex \hspace{\algorithmicindent} $aL2\_{}grid_j(d,a,z)=aprime\_{}grid(aprimeindexes_j(d,a,z))$
+     \EndFor
+     \State Solve for the optimal $(d,a')$ on the second layer:
+     \Statex \hspace{\algorithmicindent} $(d_j^*(a,z),g_j^2(a,z))$
+     \Statex \hspace{\algorithmicindent} $=\argmax_{d,\;i=1,\dots,3+2*n2} \left\{ F(d,aL2\_{}grid_j(d,a,z,i),a,z)+\beta \widehat{E[V_{j+1}]}(aL2\_{}grid_j(d,a,z,i),z) \right\}$
+     \State Set $V_j(a,z)$ equal to this maximum.
+    \EndFor
+   \EndFor
+  \EndFor
+  \State Convert the first-layer midpoint and second-layer index into the stored policy.
+  \State Let the lower-grid-point index be $g_{j,lower}(a,z)=midpoint_j(d_j^*(a,z),a,z)-\mathbbm{1}\{g_j^2(a,z)<n2+2\}$.
+  \State Let the interpolation-layer index be
+  \Statex \hspace{\algorithmicindent} $g_{j,L2}(a,z)=\mathbbm{1}\{g_j^2(a,z)<n2+2\}g_j^2(a,z)+\mathbbm{1}\{g_j^2(a,z)\geq n2+2\}(g_j^2(a,z)-n2-1)$.
+  \State Store the policy as $g_j(a,z)=[d_j^*(a,z),g_{j,lower}(a,z),g_{j,L2}(a,z)]$.
+   \\ \Return $[V_1,V_2,...,V_{N_j}]$, $[g_1,g_2,...,g_{N_j}]$
+\end{algorithmic}
+
+The first layer is essentially the usual discretized problem, except that with a decision variable it is solved conditional on each $d$. The second layer then creates a different local fine grid for each possible value of $d$, and the final maximization over the second layer chooses the optimal $(d,a')$. This is exactly how the Matlab code in \texttt{ValueFnIter\_{}FHorz\_{}GI\_{}raw.m} is organized.
+
+The policy is stored using the lower grid point on the original $a\_{}grid$ together with the interpolation-layer index, rather than storing the value of $a'$ directly. This makes it easy to use the policy later for both the agent distribution and evaluation on the agent distribution. The upper grid point is just one plus the lower grid point, and because the second-layer points are evenly spaced, the interpolation weights can be recovered directly from the interpolation-layer index.
+
+\subsubsection{Finite Horizon: semi-exogenous state}
+We now add a semi-exogenous state. Semi-exogenous shocks are exogenous states for which the transition probabilities depend on a decision variable (see Life-Cycle Model 30 for an example). Thus, $\pi_{semiz}(semiz'|semiz,d)$ gives the probability of the next-period semi-exogenous state as a function of the current semi-exogenous state and the decision variable.
+
+The main difference is that the expectation term is now more complex.
+
+\begin{algorithmic}
+ \State Solve for final period, $N_j$: $V_{N_j}(a,semiz,z)=\max_{d,a' \in D(a,semiz,z)} F(d,a',a,semiz,z)$
+ \State ... and keep the $\argmax$ $g_{N_j}$.
+  \For $j$ count backward from $N_j-1$ to $1$
+   \State Get $\theta_j$ from $\Theta$
+   \For All values of $d$
+    \For All values of $(semiz,z)$
+     \State Calculate $E[V_{j+1}(a',semiz',z')|d,semiz,z]$
+     \Statex \hspace{\algorithmicindent} $=\sum_{semiz',z'} V_{j+1}(a',semiz',z') \pi_z(z,z') \pi_{semiz}(semiz'|semiz,d)$
+     \For All values of $a$
+      \State Calculate $V_j(a,semiz,z|d)$
+      \Statex \hspace{\algorithmicindent} $=\max_{a' \in D(a,semiz,z)} \left\{ F(d,a',a,semiz,z)+\beta E[V_{j+1}(a',semiz',z')|d,semiz,z] \right\}$
+      \State ... and keep the $\argmax$ $g_j(a,semiz,z|d)$.
+      \EndFor
+     \EndFor
+    \EndFor
+    \For All values of $(a,semiz,z)$
+     \State $V_j(a,semiz,z)=\max_{d} V_j(a,semiz,z|d)$
+     \State Let $d^*(a,semiz,z)=\argmax_d V_j(a,semiz,z|d)$.
+     \State Then $g_j(a,semiz,z)=g_j(a,semiz,z|d^*(a,semiz,z))$.
+    \EndFor
+  \EndFor
+   \\ \Return $[V_1,V_2,...,V_{N_j}]$, $[g_1,g_2,...,g_{N_j}]$
+\end{algorithmic}
+
+The term $E[V_{j+1}(a',semiz',z')|d,semiz,z]$ is doing a lot of work here. It adds an extra dimension to the expectation term, because the expectation must now be computed separately for each value of $d$ and for each current pair $(semiz,z)$. For this reason, it is natural to solve the problem conditional on $d$ first, and then maximize over $d$ afterward. Here, values of $d$ that are not in $D(a,semiz,z)$ are implicitly assigned a return of $-\infty$, so they will never be chosen.
+
+
+\subsubsection{Finite Horizon: experienceasset}
+'experienceasset' is an endogenous state where aprime cannot be chosen directly, but is instead a function of a decision variable and this period endogenous state; $aprime(d,a)$. The basic idea of how VFI Toolkit handles these is to evaluate $aprime(d_i,a_i)$ as a value on the grids of d and a, and then linearly interpolate this $aprime(d_i,a_i)$ onto the grid for a by allocating it to the grid-points above and below that value with linear weights.
+
+So in a finite-horizon model with no other endogenous states, and no decision variables except those influencing the next period experienceasset, the algorithm is
+\begin{algorithmic}
+ \State Solve for final period, $N_j$: $V_{N_j}(a,z)=max_{d\in D(a,z)} F(d,a,z)$
+ \State ... and keep the argmax $g_{N_j}$.
+ \For $j$ count backward from $N_j-1$ to $1$
+   \State Get $\theta_j$ from $\Theta$
+   \For All values $z$
+    \State Calculate $E[V_{j+1}(a',z')]$
+    \State Evaluate $aprime(d,a)$ on the grids for $d$ and $a$
+    \State Interpolate $aprime(d,a)$ onto the grid for $a$; get $aprime_i(d,a)$ and $aProbs(d,a)$, the index for the lower grid point and the probability of the lower grid point.
+    \State Switch $E[V_{j+1}(a',z')]$ to $E[V_{j+1}(d,a,z')]$ using $aprime_i(d,a)$ and $aProbs(d,a)$ to replace $a'$ with $d$ and $a$.
+    \For All values of $(a,z)$
+     \State Calculate $V_j(a,z)=max_{d \in D(a,z)} F(d,a,z)+\beta E[V_{j+1}(d,a,z')]$
+     \State ... and keep the $argmax$ $g_j(a,z)$.
+     \EndFor
+   \EndFor
+  \EndFor
+   \\ \Return $[V_1,V_2,...,V_{N_j}]$, $[g_1,g_2,...,g_{N_j}]$
+\end{algorithmic}
+notice that $a'$ no longer appears in the return function. The main trick is to replace $E[V_{j+1}(a',z')]$ to $E[V_{j+1}(d,a,z')]$, by interpolating $aprime(a,z)$ onto the grid on $a$.
+
+The way interpolation is done is that for a value of $aprime$ that we want to interpolate onto the grid $[a_1,a_2,\dots,a_n]$ we, (i) find the $a_i$ that is the largest grid point that has a value less than (or equal to) $aprime$, call this the lower grid point, (ii) we allocate $aprime$ to both the lower grid point $a_i$ and the upper grid point $a_{i+1}$ using weights, (iii) we use linear weights for $a_i$ and $a_{i+1}$, so if $aprime$ is halfway between the two we give a weight of 0.5 to each, this is implemented by giving the lower grid point, $a_i$ a weight of $1-(aprime-a_i)/(a_{i+1}-a_i)$ (the weight for the upper grid point is just 1-this). This interpolation can be seen in \href{https://github.com/vfitoolkit/VFIToolkit-matlab/blob/master/aprimeFnMatrix/CreateExperienceAssetFnMatrix_Case1.m}{CreateExperienceAssetFnMatrix\_{}Case1.m}, the first part of the code creates $aprime(a,z)$ and then the last 30-40ish lines are doing the interpolation onto the grid, note that we only need to keep the lower grid point index and the probability assigned to the lower grid point (as the upper grid point is just adding one to this index, and the probability is one minus this).
+
+\subsubsection{How interpolation is done}\label{sec:interp}
+VFI Toolkit uses linear interpolation as part of alternative endogenous states like experienceasset, experienceassetu, riskyasset, and more. There are two halves to how the toolkit uses interpolation. One half is to put points onto a grid (as a lower-grid-point index and the interpolation weight on that lower grid point, which together implicitly determine the upper grid point and its weight). The second half is to use this to 'switch' grids.
+
+For example in the previous pseudocode we saw the first half as: \\
+\textit{Interpolate $aprime(d,a)$ onto the grid for $a$; get $aprime_i(d,a)$ and $aProbs(d,a)$, the index for the lower grid point and the interpolation weight on the lower grid point.}
+\\ The way that the toolkit interpolates a value onto the grid is to use linear interpolation. So say we have that the value we want to interpolate onto the grid is $x$, and the grid is $\{x_1,x_2,\dots,x_n\}$. If $x\leq x_1$ we assign all the weight to $x_1$. If $x\geq x_n$ we assign all the weight to $x_n$. Otherwise, we find the two grid points either side of $x$, call them $x_i$ and $x_{i+1}$, so that $x_i\leq x < x_{i+1}$. Then we call $x_i$ the lower grid point, and assign it the interpolation weight $1-\frac{(x-x_i)}{(x_{i+1}-x_i)}$ (which is between 0 and 1, and is 1 if $x=x_i$). The interpolation weight on the upper grid point is then $\frac{(x-x_i)}{(x_{i+1}-x_i)}$, which is also between 0 and 1 and approaches 1 as $x$ approaches $x_{i+1}$. We only need to store the lower-grid-point index and the interpolation weight on the lower grid point, because the upper grid point is then just the next point on the grid and its weight is one minus the lower-grid-point weight.
+
+While the second half in the previous pseudocode we saw as: \\
+\textit{Switch $E[V_{j+1}(a',z')]$ to $E[V_{j+1}(d,a,z')]$ using $aprime_i(d,a)$ and $aProbs(d,a)$ to replace $a'$ with $d$ and $a$.}
+\\ The way the toolkit does this is that for every $(d,a)$ we have a value $aprime(d,a)$ which we associated in the first half with a lower-grid-point index and interpolation weight, $aprime_i(d,a)$ and $aProbs(d,a)$. Looking at $E[V_{j+1}(a',z')]$ and ignoring the $E[\cdot]$ for the moment, we get
+\begin{eqnarray*}
+V_{j+1}(a',z') &=& aProbs(d,a)\,V_{j+1}(a_{aprime_i(d,a)},z') \\
+&& + (1-aProbs(d,a))\,V_{j+1}(a_{aprime_i(d,a)+1},z') \\
+&\equiv& V_{j+1}(d,a,z').
+\end{eqnarray*}
+At the lower and upper boundaries this collapses to putting all weight on a single grid point. We just need to do this before we evaluate the expectations term, and we will thus get $E[V_{j+1}(d,a,z')]$.
+
+\subsubsection{Finite Horizon: riskyasset}
+'riskyasset' is an endogenous state where aprime cannot be chosen directly, but is instead a function of a decision variable and a between-period i.i.d. shock; $aprime(d,u)$. The basic idea of how VFI Toolkit handles these is to evaluate $aprime(d_i,u_i)$ as a value on the grids of d and u, and then linearly interpolate this $aprime(d_i,u_i)$ onto the grid for $a$ by allocating it to the grid-points above and below that value with linear weights.
+
+So in a finite-horizon model with no other endogenous states, and no decision variables except those influencing the next period riskyasset, the algorithm is
+\begin{algorithmic}
+ \State Solve for final period, $N_j$: $V_{N_j}(a,z)=max_{d\in D(a,z)} F(d,a,z)$
+ \State ... and keep the argmax $g_{N_j}$.
+ \For $j$ count backward from $N_j-1$ to $1$
+   \State Get $\theta_j$ from $\Theta$
+   \For All values $z$
+    \State Calculate $E[V_{j+1}(a',z')]$
+    \State Evaluate $aprime(d,u)$ on the grids for $d$ and $u$
+    \State Interpolate $aprime(d,u)$ onto the grid for $a$; get $aprime_i(d,u)$ and $aProbs(d,u)$, the index for the lower grid point and the probability of the lower grid point.
+    \State Switch $E[V_{j+1}(a',z')]$ to $E[V_{j+1}(d,u,z')]$ using $aprime_i(d,u)$ and $aProbs(d,u)$ to replace $a'$ with $d$ and $u$.
+    \State Take expectations over $u$ to convert $E[V_{j+1}(d,u,z')]$ to $E[V_{j+1}(d,z')]$
+    \For All values of $(a,z)$
+     \State Calculate $V_j(a,z)=max_{d \in D(a,z)} F(d,a,z)+\beta E[V_{j+1}(d,z')]$
+     \State ... and keep the $argmax$ $g_j(a,z)$.
+     \EndFor
+   \EndFor
+  \EndFor
+   \\ \Return $[V_1,V_2,...,V_{N_j}]$, $[g_1,g_2,...,g_{N_j}]$
+\end{algorithmic}
+notice that $a'$ no longer appears in the return function. The main trick is to replace $E[V_{j+1}(a',z')]$ to $E[V_{j+1}(d,z')]$, by interpolating $aprime(d,u)$ onto the grid on $a$, and then taking expectations over $u$.
+
+Note: An important improvement to runtimes in models with riskyasset is the use of 'refinement'. Essentially in many models some decision variables will appear in the ReturnFn but not the aprimeFn, and vice-versa. We can 'refine' out these decision variables before we combine the return function, $F(d,a,z)$ and the expectations term, $E[V_{j+1}]$. This massively shrinks the size of the combined problem and leads to both faster runtimes and lower memory use. It only makes sense to do on a gpu. Refine is explained for infinite horizon problems in Section \ref{sec:refine}. The linear interpolation is explained in Section \ref{sec:interp}.
+
+\subsubsection{Finite Horizon: standard \& riskyasset}
+When using a standard endogenous state and a riskyasset together, the risky asset is always set up as the second endogenous state so we will call them $a1$ and $a2$, respectively. This approach is just to combine the usual approaches to each endogenous state, so the standard endogenous state will have $a1prime$ chosen on the grid while the riskyasset will be evaluated on the grids of $d$ and $u$ to get $a2prime(d_i,u_i)$ and then this is linearly interpolated onto the $a2$ grid by allocating it to the grid-points above and below that value with linear weights.
+
+So in a finite-horizon model with no decision variables except those influencing the next period riskyasset, the algorithm is
+\begin{algorithmic}
+ \State Solve for final period, $N_j$: $V_{N_j}(a1,a2,z)=max_{a1,d\in D(a1,a2,z)} F(d,a1prime,a1,a2,z)$
+ \State ... and keep the argmax $g_{N_j}$.
+ \For $j$ count backward from $N_j-1$ to $1$
+   \State Get $\theta_j$ from $\Theta$
+   \For All values $z$
+    \State Calculate $E[V_{j+1}(a1',a2',z')]$
+    \State Evaluate $a2prime(d,u)$ on the grids for $d$ and $u$
+    \State Interpolate $a2prime(d,u)$ onto the grid for $a2$; get $a2prime_i(d,u)$ and $a2Probs(d,u)$, the index for the lower grid point and the probability of the lower grid point.
+    \State Switch $E[V_{j+1}(a1',a2',z')]$ to $E[V_{j+1}(d,a1',u,z')]$ using $a2prime_i(d,u)$ and $a2Probs(d,u)$ to replace $a2'$ with $d$ and $u$.
+    \State Take expectations over $u$ to convert $E[V_{j+1}(d,a1',u,z')]$ to $E[V_{j+1}(d,a1',z')]$
+    \For All values of $(a1,a2,z)$
+     \State Calculate $V_j(a1,a2,z)=max_{d,a1' \in D(a1',a2',z)} F(d,a1',a1,a2,z)+\beta E[V_{j+1}(d, a1',z')]$
+     \State ... and keep the $argmax$ $g_j(a1,a2,z)$.
+     \EndFor
+   \EndFor
+  \EndFor
+   \\ \Return $[V_1,V_2,...,V_{N_j}]$, $[g_1,g_2,...,g_{N_j}]$
+\end{algorithmic}
+notice that $a2'$ does not appear in the return function. The main trick is to replace $E[V_{j+1}(a1',a2',z')]$ with $E[V_{j+1}(d,a1',z')]$, by interpolating $a2prime(d,u)$ onto the grid on $a2$, and then taking expectations over $u$.
+
+\subsubsection{Finite Horizon: Epstein-Zin preferences}
+There are various different ways to set up Epstein-Zin preferences, such as in consumption-units, in utility-units with positive utility, in utility-units with negative utility, and 'double Epstein-Zin' which treats the additional risk aversion differently for survival probabilities to other probabilities. VFI Toolkit handles all of these in a single code by taking advantage of the fact that we can set up a generic Epstein-Zin with eight 'Epstein-Zin coefficients' (called $ezc1$, $ezc2$,$\dots$, $ezc8$ in the codes), and then all the different Epstein-Zin preferences simply correspond to different values of these eight coefficients.\footnote{This approach was developed from scratch for VFI Toolkit.}
+
+The generic Epstein-Zin value fn problem for a finite-horizon value fn problem with markov shocks is,
+\begin{eqnarray*}
+ V_j(a,z)=\max_{d,a'} ezc1*\left( (ezc1*F(d,a',a,z)^{ezc2}) + ezc3*\beta*(s_j E[ezc4*V_{j+1}(a',z')^{ezc5}|z]^{ezc8})^{ezc6} \right)^{ezc7}
+\end{eqnarray*}
+
+The algorithm for solving this is,
+\begin{algorithmic}
+ \State Solve for final period, $N_j$: $V_{N_j}(a,z)=max_{d,a' \in D(a,z)} (ezc1*F(d,a',a,z)^{ezc2})^{ezc7} $
+ \State ... and keep the argmax $g_{N_j}$.
+ \For $j$ count backward from $N_j-1$ to $1$
+   \State Get $\theta_j$ from $\Theta$
+   \For All values $z$
+    \State Calculate $E[ezc4*V_{j+1}(a',z')^{ezc5}|z]^{ezc8}$
+    \For All values of $(a,z)$
+     \State Calculate $V_j(a,z)=max_{d,a' \in D(a,z)} ezc1*\left( (ezc1*F(d,a',a,z)^{ezc2})+ezc3*\beta (s_j E[ezc4*V_{j+1}(a',z')^{ezc5}|z]^{ezc8})^{ezc6} \right)^{ezc7}$
+     \State ... and keep the $argmax$ $g_j(a,z)$.
+     \EndFor
+   \EndFor
+  \EndFor
+   \\ \Return $[V_1,V_2,...,V_{N_j}]$, $[g_1,g_2,...,g_{N_j}]$
+\end{algorithmic}
+Implementing the code for this requires a bit of care because there are issues around things like 0s and negative powers where you have to be careful to treat it correctly.
+
+We now go through different Epstein-Zin setups and explain how the eight Epstein-Zin coefficients are set in each case. We use $ceis$ and $crisk$ to refer to the elasticity of intertemporal substitition and risk aversion parameters, respectively.
+\\ \noindent \textit {Traditional EZ in consumption units}
+\begin{eqnarray*}
+ezc1=1; \\
+ezc2=1-1./ceis; \\
+ezc3=1; \\
+ezc4=1; \\
+ezc5=1-crisk; \\
+ezc6=(1-1./ceis)./(1-crisk); \\
+ezc7=1./(1-1./ceis); \\
+ezc8=1;
+\end{eqnarray*}
+\\ \noindent \textit{EZ in utility-units (in utils): positive utility}
+\begin{eqnarray*}
+ ezc1=1; \\
+ ezc2=1; \\
+ ezc3=1; \\
+ ezc4=1; \\
+ ezc5=1-crisk; \\
+ ezc6=1./(1-crisk); \\
+ ezc7=1; \\
+ ezc8=1;
+\end{eqnarray*}
+\\ \noindent \textit{EZ in utility-units (in utils): negative utility}
+\begin{eqnarray*}
+ ezc1=1; \\
+ ezc2=1; \\
+ ezc3=-1; \\
+ ezc4=-1; \\
+ ezc5=1+crisk; \\
+ ezc6=1./(1+crisk); \\
+ ezc7=1; \\
+ ezc8=1;
+\end{eqnarray*}
+Note: If the utility is negative use 1+crisk instead of 1-crisk. This way the interpretation of crisk is identical in both cases. And then we need to multiply it by -1 in two places, which is done by setting $ezc3$ and $ezc4$ to both be negative.
+\\ \noindent \textit{Double Epstein-Zin: inner EZ is about risk, out EZ is about mortality risk}
+\begin{eqnarray*}
+\text{EZ in consumption units:} \\
+    ezc6=(1-1./ceis)./(1-mrisk); \\
+    ezc8=(1-mrisk)./(1-crisk); \\
+\text{EZ in utils with positive utility: } \\
+    ezc6=1./(1-mrisk); \\
+    ezc8=(1-mrisk)./(1-crisk); \\
+\text{EZ in utils with negative utility: } \\
+    ezc6=1./(1+mrisk); \\
+    ezc8=(1+mrisk)./(1+crisk);
+\end{eqnarray*}
+Note: this must be used together with one of the other settings, hence just showing which parameters need to change. $mrisk$ is the risk aversion parameter for the mortality risk.
+\\ \noindent \textit{Scale returns by $1-\beta$ or $1-s_j\beta$:}
+Some people like to scale the return function by $1-\beta$ or $1-s_j\beta$ (done with vfoptions.EZoneminusbeta). This just requires setting $ezc1=1-\beta$ or $ezc1=1-s_j\beta$.
+
+There is one aspect of Epstein-Zin preferences that cannot be accomodated by this approach, namely when the elasticity of intertemporal substitution is equal to one. As can clearly be seen in the definitions of the Epstein-Zin coefficients, this would lead to some of them being undefined due to division by zero, or blowing off to infinity. It is possible to solve Epstein-Zin preferences with the elasticity of intertemporal substitution is equal to one, but it cannot be fit into our generic Epstein-Zin problem. For how the problem has to be set up, see Sargent \& Lungquist 4ed (2018) on pages 566-568, specifically looking at eqn (14.7.3) and compare the two cases. In practice, you could use the toolkit to solve with an elasticity of intertemporal substitition equal to 0.99 and again with 1.01, and as long as they give much the same solution, just interpret this as being a good enough approximation to the solution with 1.\footnote{Thanks to Louis Daumas for pointing me to where to find this.}
+

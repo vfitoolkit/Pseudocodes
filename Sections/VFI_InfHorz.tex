@@ -1,0 +1,60 @@
+\subsection{Infinite Horizon: decision variable, markov shock}
+Starting from an initial guess for the value function, we iterate on the value function until convergence. To speed things up Howards improvement is used.
+\begin{algorithmic}
+ \State Declare initial value $V_0$.
+ \State Declare iteration count $n=0$.
+ \While {$||V_n-V_{n-1}||>$ 'tolerance constant'}
+   \State Increment $n$. Let $V_{old}=V_{n-1}$.
+   \For All values $z$
+    \State Calculate $E[V_{old}(a',z')]$
+    \For All values of $a$
+     \State Calculate $V_n(a,z)=max_{d,a' \in D(a,z)} F(d,a',a,z)+\beta E[V_{old}(a',z')]$
+     \State ... and keep the $argmax$ $g_n(a,z)$.
+     \EndFor
+   \EndFor
+   \If UseHowards==1
+    \For nHowards number of times
+     \State Update $V_n(a,z)=F(g^{d}_n(a,z),g^{a'}_n(a,z),a,z)+\beta E[V_n(g^{a'}_n(a,z),z')]$
+    \EndFor
+   \EndIf
+ \EndWhile
+ \\ \Return $V_n$, $g_n$
+\end{algorithmic}
+Note that by making the outer-loop over $z$ we are able to reduce the number of times we compute the expectations (which depend on $z$ and not on $a$).
+
+Howards improvement algorithm is to use the current policy to evaluate/update the value function a couple of times. This is faster as it skips the maximization step (which is computationally the most costly) and because the policy function typically is 'pointing' in the direction of the solution, so a few cheap computations to move further in this direction is worthwhile. $UseHowards$ is implemented as conditions under which Howards improvement algorithm should be used (which can be controlled using $vfoptions$. $nHowards$ is set to 80 by default (based on a trying out a bunch of different values, this seemed to be best at speeding up the 'average' problem). In practice, we avoid using Howards improvement algorithm for the first few iterations (as the initial guess is likely poor, and so Howards does not much help), and also stop using Howards improvement algorithm once we are within one order of magnitude of convergence of the value function.\footnote{This is because otherwise Howards leads to very small errors. You won't notice them normally, but when trying to compute a placebo transition path between stationary equilibrium they are problematic as the transition won't use Howards and so tries to go to a very slightly different place. If you are thinking 'but I saw the proof in Sargent \& Stachurski that Howards is fine and gives same answer' the trick is that the last line of their proof assumes that Howards evaluates the 'policy greedy' value function, but in practice you will never do this. (Placebo transition=a transition path in which nothing changes, this is actually quite a demanding test of accuracy; this is not a dig at S\&S, all textbooks do the same.)}
+
+A couple of hints to how this could be done better (the kind of improvements that work for just about any algorithm, rather than things like using endogenous grid method instead of pure discretization): ideally it would use the improved versions of Howards developed in \cite{Rendahl2022}, \cite{BakotaKredler2022} and \cite{PhelanEslami2022} (I've not tried these). And it would use relative VFI, or even endogenous VFI (for these later two, they were tried but don't work in VFI Toolkit because of the pure discretization);  \cite{Bray2017}.
+
+\subsubsection{Refinement} \label{sec:refine}
+If you set \textit{vfoptions.solnmethod = ‘purediscretization\_{}refinement’;} then the algorithm will be the 'refinement'. Refinement is based on the observation that $d$ does not enter the expectations next period value function, only the return function. So we can 'pre-solve',  choosing $d$ to maximize the return function $F(d,aprime,a,z)$ to get $d^{*}(aprime,a,z)$, the decision that maximizes the return function given $(aprime,a,z)$, and associated maximum values $F^{*}(aprime,a,z)$. We then perform standard value function iteration, but just using $F^{*}(aprime,a,z)$, so we have essentially removed $d$ from the problem on which we have to iterate. Once we finish solving we can put the optimal policy for $aprime$ into $d^{*}(aprime,a,z)$ to get the optimal policy for $d$. This is faster because we just pre-solve for $d$ once, and thereby avoid having to solve for it as part of every iteration.
+
+\begin{algorithmic}
+   \For All values $z$  \Comment First, pre-solve for $d$
+    \For All values $a$
+     \State Calculate $F^{*}(a',a,z)=max_{d \in D(a,z)} F(d,a',a,z)$ and the argmax $d^{*}(a',a,z)$
+    \EndFor
+   \EndFor
+ \State Declare initial value $V_0$. \Comment Now do standard VFI without $d$ variable
+ \State Declare iteration count $n=0$.
+ \While {$||V_n-V_{n-1}||>$ 'tolerance constant'}
+   \State Increment $n$. Let $V_{old}=V_{n-1}$.
+   \For All values $z$
+    \State Calculate $E[V_{old}(a',z')]$
+    \For All values of $a$
+     \State Calculate $V_n(a,z)=max_{a' \in D(a,z)} F^{*}(a',a,z)+\beta E[V_{old}(a',z')]$
+     \State ... and keep the $argmax$ $g_n(a,z)$.
+     \EndFor
+   \EndFor
+   \If UseHowards==1
+    \For nHowards number of times
+     \State Update $V_n(a,z)=F^{*}(g^{a'}_n(a,z),a,z)+\beta E[V_n(g^{a'}_n(a,z),z')]$
+    \EndFor
+   \EndIf
+ \EndWhile
+ \State Evaluate $g_n^{d}(a,z)=d^{*}(g^{a'}(a,z),a,z)$  \Comment Recover the policy for $d$
+ \\ \Return $V_n$, $g_n$
+\end{algorithmic}
+
+Note that the only difference between the refinement is internal. All inputs and outputs will be identical. Refinement also has the nice property that if we loop when calculating $d^{*}$ and then parallize the value function iteration itself, we reduce the memory requirements as well as reducing the runtime making it possible to solve more complex problems (as long as they have a $d$ variable). Obviously the refinement is not possible in models that do not have a $d$ variable to begin with.\footnote{Pure-discretization makes this refinement easy, but in principle it should be possible to do with algorithms that use functional forms to fit the value and policy functions.}
+

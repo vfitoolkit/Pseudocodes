@@ -1,0 +1,150 @@
+\subsection{Agent Distribution in Finite Horizon}
+There are two ways to compute the agent distribution in finite horizon, simulation and iteration. The user must define/input the period-1 distribution. The iteration method is used by default as it has a better combination of speed and accuracy than simulation, but because the iteration requires more memory it will sometimes not be possible and simulation should then be used instead (default is \textit{vfoptions.iterate=1}, setting it to 0 means simulation will be used instead). When we use simulation we are essentially just doing a panel data simulation, but then converting the result into an agent distribution.
+
+% Note that VFI Toolkit stores the finite agent distribution as a mass one probability distribution conditional on each age, as well as a vector of weights for ages.\footnote{Two motives. That every age-conditional distribution should be mass one is something we can check when trying to debug. I suspect this is more robust to numerical rounding error.}
+
+\subsubsection{Simulating the Agent Distribution}
+The pseudocode for simulating the agent distribution follows. Note everything is done based on the index of $(a,z)$, not the value. We use $\mu_j$ to denote the distribution at age/period $j$, and $g$ denotes policy function, $\pi_z$ denotes the transition matrix for the exogenous state.
+\begin{algorithmic}
+ \State Define initial age-1 distribution $\mu_1(a,z)$
+ \State Define age-weights $\omega(j)$
+ \State We will perform $N$ simulations of length $J$
+ \For $i$ count from $1$ to $N$ (Parallel-for over cpu cores)
+  \State Draw starting point $(a_1,z_1)$ from $\mu_1(a,z)$
+  \State Create $Dist_i=zeros($\textit{size of $(a,z,j)$ space}$)$
+  \For $j$ counts from $1$ to $J$
+   \State Get $a_jg(a_{j-1},z_{j-1},j-1)$
+   \State Draw $z_j$ from $\pi_z(z_j|z_{j-1};j)$
+  \EndFor
+  \State $Dist_i(a_j, z_j,j)=Dist_i(a_j, z_j,j)+1$ (recall, using indexes, not values)
+ \EndFor
+ \State $Dist(:,:,:,i)=Dist_i$ \Comment Put the $Dist_i$ together
+ \State $Dist=sum(Dist,$in the $i$ dimension$)$
+ \Comment $Dist$ is now a count of how many times each point in distribution was visited during the simulations
+ \State $Dist(:,:,j)=Dist(:,:,j)/sum(Dist(:,:,j))$, for each $j$
+ \Comment Normalize conditional on age to be a probability distribution
+ \State Multiply $\omega$ along the $j$ dimension of $Dist$.
+ \\ \Return $Dist$
+\end{algorithmic}
+
+\subsubsection{Iterating the Agent Distribution}
+To iterate the agent distribution in finite horizon, we need an initial distribution defined by the user, $\mu_1$, and a transition matrix on $(a,z)$ for each period $j$, denoted $P_j$. The matrix $P_j$ is constructed by combining the policy function for period $j$, $g_j$, with the transition matrix for the exogenous shocks in period $j$, $\pi_{z,j}$.
+
+We just iterate $j$ times,
+\begin{algorithmic}
+ \State Define initial age-1 distribution $\mu_1(a,z)$ (must be mass 1)
+ \State Define age-weights $\omega(j)$
+ \For $j$ counts from $1$ to $J-1$
+  \State Construct $P_j$ from $g_j$ and $\pi_{z,j}$
+  \State $\mu_{j+1}=P_j \mu_j$ \Comment Iterate agent distribution
+ \EndFor
+ \State Store all the $\mu_j$ in $\mu$
+  \State Multiply $\omega$ along the $j$ dimension of $\mu$.
+ \\ \Return $\mu$
+ \end{algorithmic}
+In the actual codes the storing of $\mu_j$ in $\mu$ is done inside the for-loop, and we just have a $\mu_{new}$ and $\mu_{old}$ rather than all of the $\mu_j$.
+
+More precisely, $P_j$ is a sparse matrix whose columns index current states $(a,z)$ and whose rows index next-period states $(a',z')$. For each current state $(a,z)$ there is only one policy-chosen value of $a'$, namely $a'=g_j(a,z)$, so the only non-zero entries in the column for $(a,z)$ are
+\[
+P_j\big((a',z'),(a,z)\big)=\mathbbm{1}\{a'=g_j(a,z)\}\pi_{z,j}(z'|z).
+\]
+Hence each column of $P_j$ contains exactly $N_z$ non-zeros, one for each possible value of $z'$. In the Matlab code, these states are first flattened to a single linear index on $(a,z)$ space, and the non-zero row indices are created by taking the policy index for $a'$ and then adding the offset for the current $z$, so that the first step of the Tan improvement can be implemented as a sparse matrix multiplication.
+
+VFI Toolkit by default will actually use the Tan improvement when iterating on the agent distribution and we turn to that now. We note that $P$ here takes us directly from $(a,z)$ to $(a',z')$.
+
+\subsubsection{Tan Improvement Iterating the Agent Distribution}
+The Tan improvement is the observation that instead of using $P_j$ directly, we can use $g_j$ and $\pi_{z,j}$ one at a time. This bit of genius means we do exactly the same, but in a way that is faster and less memory demanding (people spent 30+ years using $P$ before Tan saw that you could split it in two!).
+
+We just iterate $j$ times,
+\begin{algorithmic}
+ \State Define initial age-1 distribution $\mu_1(a,z)$ (must be mass 1)
+ \State Define age-weights $\omega(j)$
+ \For $j$ counts from $1$ to $J-1$
+  \State Construct $\Gamma_j$ from $g_j$
+  \State $\mu_{temp}=\Gamma_j \mu_j$ \Comment First step of Tan improvement
+  \State $\mu_{j+1}=\pi_{z,j} \mu_{temp}$ \Comment Second step of Tan improvement
+ \EndFor
+ \State Store all the $\mu_j$ in $\mu$
+  \State Multiply $\omega$ along the $j$ dimension of $\mu$.
+ \\ \Return $\mu$
+ \end{algorithmic}
+There is some reshaping of matrices involved in the Tan improvement that I have glossed over here; for a full explanation, see \cite{Tan2020}.
+
+The Tan improvement can be understood as breaking the move from $(a,z)$ to $(a',z')$ into two steps. The first step is from $(a,z)$ to $(a',z)$, where the policy determines the next-period endogenous state. The second step is from $(a',z)$ to $(a',z')$, where the exogenous Markov transition is applied.
+
+More precisely, $\Gamma_j$ is a sparse matrix on flattened $(a,z)$ space with columns indexed by current states $(a,z)$ and rows indexed by intermediate states $(a',z)$. Its entries are
+\[
+\Gamma_j\big((a',z),(a,z)\big)=\mathbbm{1}\{a'=g_j(a,z)\}.
+\]
+Thus each column of $\Gamma_j$ has exactly one non-zero entry. The second step then multiplies by the Markov matrix $\pi_{z,j}$ along the $z$ dimension:
+\[
+\mu_{temp}(a',z)=\sum_{a,z_0}\Gamma_j\big((a',z),(a,z_0)\big)\mu_j(a,z_0),
+\qquad
+\mu_{j+1}(a',z')=\sum_{z}\pi_{z,j}(z'|z)\mu_{temp}(a',z).
+\]
+This is exactly what the Matlab code does in \texttt{StationaryDist\_FHorz\_Iteration\_raw.m}: it constructs a sparse operator from the policy indexes, reshapes the result to an $(a',z)$ array, and then right-multiplies by $\pi_{z,j}$.
+
+\subsubsection{Tan Improvement with Semi-Exogenous shocks}
+Semi-exogenous shocks are exogenous states for which the transition probabilities depend on a decision variable (see Life-Cycle Model 30 for an example). Thus, $\pi_{semiz}(semiz'|semiz,d)$ gives the probability of the next-period semi-exogenous state conditional on the current semi-exogenous state and the decision variable.
+
+Using the Tan improvement requires a minor modification. We cannot treat $semiz$ in the same way as $z$ in the second step of the Tan improvement, because the transition for $semiz$ depends on $d$, and $d$ is chosen by the policy as a function of the current state. Instead, we have to include the $semiz$ transition in the first step of the Tan improvement.
+
+We just iterate $j$ times,
+\begin{algorithmic}
+ \State Define initial age-1 distribution $\mu_1(a,semiz,z)$ (must be mass 1)
+ \State Define age-weights $\omega(j)$
+ \For $j$ counts from $1$ to $J-1$
+  \State Construct $\Gamma_j$ from $g_j$ and $\pi_{semiz,j}$
+  \State $\mu_{temp}=\Gamma_j \mu_j$ \Comment First step of Tan improvement
+  \State $\mu_{j+1}=\pi_{z,j} \mu_{temp}$ \Comment Second step of Tan improvement
+ \EndFor
+ \State Store all the $\mu_j$ in $\mu$
+  \State Multiply $\omega$ along the $j$ dimension of $\mu$.
+ \\ \Return $\mu$
+ \end{algorithmic}
+The difference from the standard Tan improvement is entirely in the first step, which now includes the semi-exogenous state transition alongside the standard endogenous state transition.
+There is some reshaping of matrices involved in the Tan improvement that I have glossed over here; for a full explanation, see \cite{Tan2020}. Note that our distribution is now on $(a,semiz,z)$, and $\Gamma_j$ is used in the first step to move to $(a',semiz',z)$, after which the second step moves to $(a',semiz',z')$.\footnote{Getting the Tan improvement to work here does require the order $(a,semiz,z)$; in fact, the whole toolkit got rewritten to make this possible, as it originally had $z$ then $semiz$.}
+
+More precisely, let $d_j(a,semiz,z)$ denote the semi-exogenous decision component of the policy, and let $a'_j(a,semiz,z)$ denote the policy for the next-period endogenous state. Then the first-step operator $\Gamma_j$ has entries
+\[
+\Gamma_j\big((a',semiz',z),(a,semiz,z)\big)
+=\mathbbm{1}\{a'=a'_j(a,semiz,z)\}\pi_{semiz,j}(semiz'|semiz,d_j(a,semiz,z)).
+\]
+Hence each column of $\Gamma_j$ has exactly $N_{semiz}$ non-zero entries, one for each possible value of $semiz'$. This is exactly how the Matlab code constructs the sparse operator in \texttt{StationaryDist\_FHorz\_Iteration\_SemiExo\_raw.m}: it flattens the state space, uses the policy to create the row indexes corresponding to $(a',semiz',z)$, uses the chosen $d_j(a,semiz,z)$ to look up the appropriate column of $\pi_{semiz,j}$, and places those transition probabilities into the sparse matrix. After this first step, the code reshapes the result as an $(a',semiz',z)$ array and then applies $\pi_{z,j}$ along the $z$ dimension to obtain $\mu_{j+1}(a',semiz',z')$.
+
+\subsubsection{Iterating the Agent Distribution with 'TwoProbs' (Linear Interpolation)}
+Sometimes our policy is 'between' grid points, e.g., while using experienceasset or grid interpolation layer. Previously our policy (for the next-period endogenous state) was always on the grid, which we can think of as a policy with a single next-period grid point to which we go with probability one. When the policy is 'between' grid points we instead think about going to two grid points, those below and above our actual policy, with probabilities that depend on how close our policy is to each grid point. We call these the 'lower' grid point and the 'upper' grid point. Obviously the two probabilities should sum to one, since we go somewhere next period with certainty, and so we can think of the probability of the upper grid point as one minus the probability of the lower grid point. Thus we only need to decide how to set the probability of the lower grid point, and we will use linear interpolation. Summing up so far, we convert a 'between' grid point policy into a two-valued policy for the lower and upper grid points, together with two probabilities for these lower and upper grid points. We can then perform standard iteration with this 'twoprobs' policy.
+
+So for example, say the policy value is $a^*$ (we will have one policy value for each point in the state space, so we will be doing this many times, but here just consider one). Our grid of values on the endogenous state is $a\_{}grid=\{a_1,a_2,\dots, a_{n\_{}a}\}$. We first need to figure out the lower grid point, the grid point immediately below $a^*$. We get this by solving $\argmax_{i=1,\dots,n\_{}a} \{a_i\leq a^*\}$; the lower grid point is the maximum point in $a\_{}grid$ that is below or equal to $a^*$. Call $a_{i_l}$ the lower grid point. By definition the upper grid point is one above this, so $a_{i_l+1}$. The probability of the lower grid point is then given by $\pi_{l}=1-\frac{a^*-a_{i_l}}{a_{i_l+1}-a_{i_l}}$; this is linear interpolation, so if $a^*$ is one-quarter of the distance from the lower to the upper grid point then the probability of the lower grid point is three-quarters, while if it is halfway the probability is one-half. The probability of the upper grid point is then $1-\pi_{l}$, because the two probabilities must sum to one.
+
+In this way we convert the policy function $Policy(a,z,j)$ into a lower grid point policy $Policy_{l}(a,z,j)$ and a lower grid point probability $Policy_{\pi,l}(a,z,j)$. We don't need to store the upper grid point policy as it is just the lower grid point policy plus one, and we similarly don't need to store the upper grid point probability as it is just one minus the lower grid point probability.
+
+First, let's discuss what $P_j$, the transition matrix from period $j$ state to period $j+1$ state, would look like if there were no exogenous Markov $z$ variables, just an endogenous state $a$ (so this paragraph is a simpler setting than the rest of this section). This will help to illustrate the differences in $P_j$ when it is constructed from a 'between' grid point policy rather than an on-grid policy. To iterate the agent distribution in finite horizon we need an initial distribution defined by the user, $\mu_1(a)$, and then construct the transition matrix on $(a)$ for each period $j$, denoted $P_j$. When $Policy(a,j)$ was a single-value policy, we got that $P_j$ was a matrix from $(a)$ to $(a')$, and in each row there was a single 1 (in the index for next period $a'$ that corresponds to the policy, given the row/index for this period $a$), together with many zeros. Now that $Policy(a,j)$ is 'between' grid points, we instead construct $P_j$ from the lower-grid-point policy $Policy_l(a,j)$ and the lower-grid-point probability $Policy_{\pi,l}(a,j)$ (and the upper-grid-point policy and probability). Thus we now get that $P_j$ is again a matrix from $(a)$ to $(a')$, but now in each row there are two non-zeros corresponding to the indexes for the lower and upper grid points, and the values of these non-zeros are the probabilities of the lower and upper grid point, respectively.
+
+Now, let's put the Markov $z$ back into the problem. The on-grid-point $P_j$ would now have $n\_{}z$ non-zeros per row, with probabilities taken from $\pi\_{}z$, while the between-grid-point $P_j$ will have $2*n\_{}z$ non-zeros per row, with probabilities taken from $\pi\_{}z \times [\pi_{l},1-\pi_{l}]$. To iterate the agent distribution in finite horizon we need an initial distribution defined by the user, $\mu_1(a,z)$, and then construct the transition matrix on $(a,z)$ for each period $j$, denoted $P_j$. When $Policy(a,z,j)$ is a single-value policy, we get that $P_j$ is a matrix from $(a,z)$ to $(a',z')$, and in each row there are $n\_{}z$ non-zeros (in the index for next period $a'$ that corresponds to the policy, given the row/index for this period $a$, crossed with the indexes for all next-period $z'$), together with the probabilities for next period $z'$ (from $\pi\_{}z(z_c,:)$, where $z_c$ is the current-period $z$ index that corresponds to the row of $P_j$). Now that $Policy(a,z,j)$ is 'between' grid points, we instead construct $P_j$ from the lower-grid-point policy $Policy_l(a,z,j)$ and the lower-grid-point probability $Policy_{\pi,l}(a,z,j)$ (and the upper-grid-point policy and probability). Thus we now get that $P_j$ is again a matrix from $(a,z)$ to $(a',z')$, but now in each row there are $2*n\_{}z$ non-zeros corresponding to the indexes for the lower and upper grid points crossed with all the next-period $z'$ indexes, and the values of these non-zeros are the probabilities of the lower and upper grid point crossed with the probabilities of next period $z'$ from $\pi\_{}z(z_c,:)$, respectively.
+
+Now that we have created $P_j$ for $j=1,\dots, J$, the rest of the algorithm for the agent distribution in a finite horizon is unchanged. Of course because $P_j$ contains more non-zeros the rest of the algorithm will take longer to compute,\footnote{Only the non-zeros matter in practice as you will always want to implement this using sparse matrices.} but the actual steps are identical.
+
+So to repeat what we saw in the case with a policy on grid, but now with a 'different' $P_j$ because our policy was between grid points, we now just iterate $j$ times,
+\begin{algorithmic}
+ \State Define initial age-1 distribution $\mu_1(a,z)$ (must be mass 1)
+ \State Define age-weights $\omega(j)$
+ \For $j$ counts from $1$ to $J-1$
+  \State Construct $P_j$ from $g_j$ and $\pi_{z,j}$
+  \State $\mu_{j+1}=P_j \mu_j$ \Comment Iterate agent distribution
+ \EndFor
+ \State Store all the $\mu_j$ in $\mu$
+  \State Multiply $\omega$ along the $j$ dimension of $\mu$.
+ \\ \Return $\mu$
+ \end{algorithmic}
+In the actual codes the storing of $\mu_j$ in $\mu$ is done inside the for-loop, and we just have a $\mu_{new}$ and $\mu_{old}$ rather than all of the $\mu_j$.
+
+VFI Toolkit by default will actually use the Tan improvement when iterating on the agent distribution, but once we understand how to create $P_j$ for 'two probs' from our between grid policy, that is not really chaning anything from when we saw the Tan improvement earlier so it is not repeated here.
+
+Note, the use of 'two probs' is not dependent on the use of linear interpolation. In VFI Toolkit it is (currently) always linear interpolation that is used to create the 'two probs' policies, but in principle any other approach to creating the two probabilities could be used.
+
+One last point. VFI Toolkit has to create the 'two probs' $P_j$ here for a few different settings. One is experienceasset, in which case the Policy is for an $a*$ value as described above. But another is for grid interpolation layer, in which case the way to construct $Policy_l$ and $Policy_{\pi,l}$ is slightly different (but after we have these is unchanged). Specifically, for grid interpolation layer the $Policy$ contains both the lower grid point for $a\_{}grid$ ---so we already directly have $Policy_l$--- and the index for the 'interpolation layer' which is be $n2$ points evenly spaced between two consecutive grid points of $a\_{}grid$ (the index can be 1 to $n2+2$ as it includes the two end points of the original grid). Since these interpolation layer points are evenly spaced, we can trivially get the probability of the lower grid point as just the (interpolation-layer-index minus one)/($n2+1$). The rest is as above. 'residualasset' is dealt with the same as 'experienceasset' as it too has Policy as a between grid point $a*$ value.
+
+\subsubsection{Iterating the Agent Distribution with 'uProbs'}
+When using riskyasset or experienceassetu, we get not one between-grid-points value as the policy for next period endogenous state, but $n\_{}u$ between-grid-points values (each value of the i.i.d. shock $u$ results in a different value). We can just create $Policy_l$ and $Policy_{\pi,l}$ for each of these $n\_{}u$ values following what we did in the previous section for 'two probs'. We then create $P_j$, which is now $2*n\_u{}*n\_{}z$ non-zeros values per row (two for the upper and lower grid points, for each of the $n\_{}u$ values, and then crossed with the $n\_{}z$ next period values for the markov $z'$). From here the iteration fo the agent distribution is standard, and things like the Tan improvement, or using semi-exogenous or i.i.d. exogenous states can all be done as usual.
+
