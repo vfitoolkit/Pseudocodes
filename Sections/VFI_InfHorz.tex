@@ -32,7 +32,9 @@ If you set \textit{vfoptions.solnmethod = ‘purediscretization\_{}refinement’
 \begin{algorithmic}
    \For All values $z$  \Comment First, pre-solve for $d$
     \For All values $a$
+     \For All values $a'$
      \State Calculate $F^{*}(a',a,z)=max_{d \in D(a,z)} F(d,a',a,z)$ and the argmax $d^{*}(a',a,z)$
+     \EndFor
     \EndFor
    \EndFor
  \State Declare initial value $V_0$. \Comment Now do standard VFI without $d$ variable
@@ -43,7 +45,7 @@ If you set \textit{vfoptions.solnmethod = ‘purediscretization\_{}refinement’
     \State Calculate $E[V_{old}(a',z')|z]=\sum_{z'} V_{old}(a',z') \pi_z(z,z')$
     \For All values of $a$
      \State Calculate $V_n(a,z)=max_{a' \in D(a,z)} F^{*}(a',a,z)+\beta E[V_{old}(a',z')]$
-     \State ... and keep the $argmax$ $g_n(a,z)$.
+     \State ... and keep the $argmax$ $g^{a'}_n(a,z)$.
      \EndFor
    \EndFor
    \If UseHowards==1
