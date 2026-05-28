@@ -18,67 +18,15 @@ The basic algorithm is simple backward iteration. Let $\Theta$ be the full set o
 
 If you were writing custom code for a specific problem, you would likely try to exploit features such as monotonicity. However, because VFI Toolkit is designed to solve generic problems, it uses this simple and robust approach.
 
-\subsubsection{Finite Horizon: grid interpolation layer}
-Grid interpolation layer adds a second layer of points for the next-period endogenous state. The first layer is the original grid on $a'$, while the second layer places $n2$ evenly spaced points between adjacent first-layer grid points. This follows closely the pseudocode in \textit{GridInterpLayer.pdf}, but here we describe the case with one endogenous state, one decision variable, and one markov shock, matching the standard finite-horizon problem above.
-
-Let $a\_{}grid=\{a_1,\dots,a_n\}$ be the grid on assets. The fine grid used by the second layer is
-\[
-aprime\_{}grid=\texttt{interp1}(1\!:\!1\!:\!n,\;a\_{}grid,\;\texttt{linspace}(1,n,n+n2*(n-1))).
-\]
-This is the grid that contains the original $n$ first-layer points together with the $n2$ evenly spaced points between each adjacent pair of first-layer points.
-
-\begin{algorithmic}
- \State For final period, $N_j$, set $E[V_{N_j+1}(a',z')|z]=0$
- \For $j$ count backward from $N_j$ to $1$
-   \State Get $\theta_j$ from $\Theta$
-   \For All values of $z$
-    \If{$j<N_j$}
-     \State Calculate $E[V_{j+1}(a',z')|z]=\sum_{z'} V_{j+1}(a',z') \pi_z(z,z')$
-    \Else
-     \State $E[V_{j+1}(a',z')|z]=0$
-    \EndIf
-    \State Interpolate $E[V_{j+1}(a',z')|z]$ from $a\_{}grid$ onto $aprime\_{}grid$ to get $\widehat{E[V_{j+1}]}(\tilde{a}',z)$
-    \For All values of $a$
-     \Statex \textit{First Layer}
-     \For All values of $d$
-      \State Solve for the optimal $a'$ on the first-layer grid:
-      \Statex \hspace{\algorithmicindent} $g_j^1(d,a,z)=\argmax_{i=1,\dots,n} \left\{ F(d,a\_{}grid(i),a,z)+\beta E[V_{j+1}(a\_{}grid(i),z')|z] \right\}$
-      \State Let $midpoint_j(d,a,z)=\max(\min(g_j^1(d,a,z),n-1),2)$
-     \EndFor
-     \Statex \textit{Second Layer}
-     \For All values of $d$
-      \State Create the second-layer grid around the first-layer midpoint:
-      \Statex \hspace{\algorithmicindent} $aprimeindexes_j(d,a,z)=(midpoint_j+(midpoint_j-1)*n2)+(-n2-1:1:1+n2)$
-      \Statex \hspace{\algorithmicindent} $aL2\_{}grid_j(d,a,z)=aprime\_{}grid(aprimeindexes_j(d,a,z))$
-     \EndFor
-     \State Solve for the optimal $(d,a')$ on the second layer:
-     \Statex \hspace{\algorithmicindent} $(d_j^*(a,z),g_j^2(a,z))$
-     \Statex \hspace{\algorithmicindent} $=\argmax_{d,\;i=1,\dots,3+2*n2} \left\{ F(d,aL2\_{}grid_j(d,a,z,i),a,z)+\beta \widehat{E[V_{j+1}]}(aL2\_{}grid_j(d,a,z,i),z) \right\}$
-     \State Set $V_j(a,z)$ equal to this maximum.
-    \EndFor
-   \EndFor
-  \EndFor
-  \State Convert the first-layer midpoint and second-layer index into the stored policy.
-  \State Let the lower-grid-point index be $g_{j,lower}(a,z)=midpoint_j(d_j^*(a,z),a,z)-\mathbbm{1}\{g_j^2(a,z)<n2+2\}$.
-  \State Let the interpolation-layer index be
-  \Statex \hspace{\algorithmicindent} $g_{j,L2}(a,z)=\mathbbm{1}\{g_j^2(a,z)<n2+2\}g_j^2(a,z)+\mathbbm{1}\{g_j^2(a,z)\geq n2+2\}(g_j^2(a,z)-n2-1)$.
-  \State Store the policy as $g_j(a,z)=[d_j^*(a,z),g_{j,lower}(a,z),g_{j,L2}(a,z)]$.
-   \\ \Return $[V_1,V_2,...,V_{N_j}]$, $[g_1,g_2,...,g_{N_j}]$
-\end{algorithmic}
-
-The first layer is essentially the usual discretized problem, except that with a decision variable it is solved conditional on each $d$. The second layer then creates a different local fine grid for each possible value of $d$, and the final maximization over the second layer chooses the optimal $(d,a')$. This is exactly how the Matlab code in \texttt{ValueFnIter\_{}FHorz\_{}GI\_{}raw.m} is organized.
-
-The policy is stored using the lower grid point on the original $a\_{}grid$ together with the interpolation-layer index, rather than storing the value of $a'$ directly. This makes it easy to use the policy later for both the agent distribution and evaluation on the agent distribution. The upper grid point is just one plus the lower grid point, and because the second-layer points are evenly spaced, the interpolation weights can be recovered directly from the interpolation-layer index.
-
 \subsubsection{Finite Horizon: semi-exogenous state}
 We now add a semi-exogenous state. Semi-exogenous shocks are exogenous states for which the transition probabilities depend on a decision variable (see Life-Cycle Model 30 for an example). Thus, $\pi_{semiz}(semiz'|semiz,d)$ gives the probability of the next-period semi-exogenous state as a function of the current semi-exogenous state and the decision variable.
 
-The main difference is that the expectation term is now more complex.
+The main difference is that the expectations term is now more complex.
 
 \begin{algorithmic}
  \State Solve for final period, $N_j$: $V_{N_j}(a,semiz,z)=\max_{d,a' \in D(a,semiz,z)} F(d,a',a,semiz,z)$
  \State ... and keep the $\argmax$ $g_{N_j}$.
-  \For $j$ count backward from $N_j-1$ to $1$
+ \For $j$ count backward from $N_j-1$ to $1$
    \State Get $\theta_j$ from $\Theta$
    \For All values of $d$
     \For All values of $(semiz,z)$
@@ -91,16 +39,14 @@ The main difference is that the expectation term is now more complex.
       \EndFor
      \EndFor
     \EndFor
-    \For All values of $(a,semiz,z)$
-     \State $V_j(a,semiz,z)=\max_{d} V_j(a,semiz,z|d)$
-     \State Let $d^*(a,semiz,z)=\argmax_d V_j(a,semiz,z|d)$.
-     \State Then $g_j(a,semiz,z)=g_j(a,semiz,z|d^*(a,semiz,z))$.
-    \EndFor
+    \State $V_j(a,semiz,z)=\max_{d} V_j(a,semiz,z|d)$
+    \State Let $d^*(a,semiz,z)=\argmax_d V_j(a,semiz,z|d)$.
+    \State Then $g_j(a,semiz,z)=g_j(a,semiz,z|d^*(a,semiz,z))$.
   \EndFor
    \\ \Return $[V_1,V_2,...,V_{N_j}]$, $[g_1,g_2,...,g_{N_j}]$
 \end{algorithmic}
 
-The term $E[V_{j+1}(a',semiz',z')|d,semiz,z]$ is doing a lot of work here. It adds an extra dimension to the expectation term, because the expectation must now be computed separately for each value of $d$ and for each current pair $(semiz,z)$. For this reason, it is natural to solve the problem conditional on $d$ first, and then maximize over $d$ afterward. Here, values of $d$ that are not in $D(a,semiz,z)$ are implicitly assigned a return of $-\infty$, so they will never be chosen.
+The $E[V_{j+1}(a',semiz',z')|d,semiz,z]$ term is doing a lot of work here. It adds an extra dimension to the expectations term, because the expectation must now be computed separately for each value of $d$ and for each current pair $(semiz,z)$. For this reason, it is natural to solve the problem conditional on $d$ first, and then maximize over $d$ afterward. Here, values of $d$ that are not in $D(a,semiz,z)$ are implicitly assigned a return of $-\infty$, so they will never be chosen.
 
 
 \subsubsection{Finite Horizon: experienceasset}
@@ -178,7 +124,7 @@ When using a standard endogenous state and a riskyasset together, the risky asse
 
 So in a finite-horizon model with no decision variables except those influencing the next period riskyasset, the algorithm is
 \begin{algorithmic}
- \State Solve for final period, $N_j$: $V_{N_j}(a1,a2,z)=max_{a1,d\in D(a1,a2,z)} F(d,a1prime,a1,a2,z)$
+ \State Solve for final period, $N_j$: $V_{N_j}(a1,a2,z)=max_{d,a1' \in D(a1,a2,z)} F(d,a1',a1,a2,z)$
  \State ... and keep the argmax $g_{N_j}$.
  \For $j$ count backward from $N_j-1$ to $1$
    \State Get $\theta_j$ from $\Theta$
@@ -189,7 +135,7 @@ So in a finite-horizon model with no decision variables except those influencing
     \State Switch $E[V_{j+1}(a1',a2',z')]$ to $E[V_{j+1}(d,a1',u,z')]$ using $a2prime_i(d,u)$ and $a2Probs(d,u)$ to replace $a2'$ with $d$ and $u$.
     \State Take expectations over $u$ to convert $E[V_{j+1}(d,a1',u,z')]$ to $E[V_{j+1}(d,a1',z')]$
     \For All values of $(a1,a2,z)$
-     \State Calculate $V_j(a1,a2,z)=max_{d,a1' \in D(a1',a2',z)} F(d,a1',a1,a2,z)+\beta E[V_{j+1}(d, a1',z')]$
+     \State Calculate $V_j(a1,a2,z)=max_{d,a1' \in D(a1,a2,z)} F(d,a1',a1,a2,z)+\beta E[V_{j+1}(d, a1',z')]$
      \State ... and keep the $argmax$ $g_j(a1,a2,z)$.
      \EndFor
    \EndFor

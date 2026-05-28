@@ -46,7 +46,7 @@
 
 \usepackage{hyperref}
 \hypersetup{
-  pdftitle={Semi-Endogenous Shocks},    % title
+  pdftitle={VFI Toolkit: Pseudocodes},    % title
   pdfauthor={Robert Kirkby},     % author
   %hyperfootnotes=false,
   %hyperindex=true,
@@ -55,7 +55,7 @@
   linkcolor=black,                % makes internal links black
   citecolor=black,                % makes citations black
   urlcolor=blue,                 % color of external links
-  breaklinks=true                 % allow links to be brocken across multiple lines      
+  breaklinks=true                 % allow links to be broken across multiple lines
 }
 
 
@@ -100,7 +100,7 @@ Please address all correspondence about this article to Robert Kirkby at $<$robe
 \setcounter{page}{1}
 
 \section{Introduction}
-This document presents pseudocodes for various commands from VFI Toolkit. The actual implementations in VFI Toolkit often involve parallelized versions of the psuedocodes presented here, and also typically have options to use more-or-less parallelization (versus looping).
+This document presents pseudocodes for various commands from VFI Toolkit. The actual implementations in VFI Toolkit often involve parallelized versions of the pseudocodes presented here, and also typically have options to use more-or-less parallelization (versus looping).
 
 This document is a work-in-progress. Please request pseudocode for any specific command you want to see it for (either by email or on discourse.vfitoolkit.com).
 
@@ -108,7 +108,7 @@ Throughout I use the standard notation of VFI Toolkit: so $d$ is a decision vari
 
 Throughout, $D(\cdot)$ denotes the set of feasible choices conditional on the current states.
 
-In many psuedocodes $g(a,z)$ denotes a policy, with $g^d(a,z)$ being the policy for the decision variables and $g^{a'}(a,z)$ being the policy for the next-period endogenous state.
+In many pseudocodes $g(a,z)$ denotes a policy, with $g^d(a,z)$ being the policy for the decision variables and $g^{a'}(a,z)$ being the policy for the next-period endogenous state.
 
 \section{Value Function Iteration: Solving for V and Policy}
 
@@ -157,16 +157,16 @@ There are various algorithms for doing this (\textit{heteroagentoptions.fminalgo
  \State Solve backward, $t=T-1,\dots,2,1$ for the value fn and policy at each $t$ (given current $\theta^k_t$)
  \State Solve forward, $t=1,2,\dots,T$ for the agent distribution (given current $\theta^k_t$ and $Policy_t$ we just found)
  \State Solve the aggregate variables (given current $\theta_t^k$ and policy/agent dist we just found for $t$)
- \State Evaluate $GeneralEqmConditions=[GEeqn_1(AggVars_1,\theta_1^k),$ $GEeqn_1(AggVars_1,\theta_1^k),$$\dots,$ $GEeqn_T(AggVars_T,\theta_T^k)]$ (evaluate general eqm eqns at each time period)
+ \State Evaluate $GeneralEqmConditions=[GEeqn_1(AggVars_1,\theta_1^k),$ $GEeqn_2(AggVars_2,\theta_2^k),$$\dots,$ $GEeqn_T(AggVars_T,\theta_T^k)]$ (evaluate general eqm eqns at each time period)
  \State Update $\Theta^{k+1}$ (in some way, likely based on $\Theta^k$ and $GeneralEqmConditions$)
  \EndWhile
- \\ \Return $\theta$
+ \\ \Return $\Theta$
 \end{algorithmic}
 The difference between the different \textit{fminalgo} is how we update the $\Theta$. The most common way to update is as a shooting algorithm.
 
 In a stationary equilibrium, parameters other than those parameters which were being determined in general equilibrium (the general equilibrium parameters) were all constant (in time) and kept in Parameters structure. When we solve transition paths, some parameters might vary over time, and this is done with the ParamPath (a path on exogenous parameters), while any other parameters not in this path are assumed to be constant at their values in Parameters structure. It is not described in algorithm above, but obviously we have to make sure to use the correct parameters in each time period.
 
-It is important to solve backward for policy and forward for agent distribution. For convenience, aggregate variables and general eqm conditions are often solved forwards while doing agent distribution, but in principle how we deal with these (in terms of timing) is not important is most models (can be important if we use lagged/leading parameter values for something).
+It is important to solve backward for policy and forward for agent distribution. For convenience, aggregate variables and general eqm conditions are often solved forwards while doing agent distribution, but in principle how we deal with these (in terms of timing) is not important in most models (can be important if we use lagged/leading parameter values for something).
 
 Whether the problem is finite or infinite-horizon value functions, and whether or not there are permanent types of different kinds of shocks is unimportant, in the sense that the above steps are all the same steps, just that the details of their implementation is changed.
 
