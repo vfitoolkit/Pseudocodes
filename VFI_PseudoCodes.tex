@@ -104,6 +104,8 @@ This document presents pseudocodes for various commands from VFI Toolkit. The ac
 
 This document is a work-in-progress. Please request pseudocode for any specific command you want to see it for (either by email or on discourse.vfitoolkit.com).
 
+Several features of VFI Toolkit have their own companion write-ups that go into more detail and include figures. Two that are relevant to the algorithms described here are Divide and Conquer (\href{https://github.com/robertdkirkby/DivideAndConquer}{github.com/robertdkirkby/DivideAndConquer}) and the Grid Interpolation Layer (\href{https://github.com/robertdkirkby/GridInterpolationLayer}{github.com/robertdkirkby/GridInterpolationLayer}); each github repository contains the corresponding pdf.
+
 Throughout I use the standard notation of VFI Toolkit: so $d$ is a decision variable, $a$ is endogenous state (and $a'$ the next-period endogenous state), $z$ is a markov exogenous state, $e$ is an i.i.d. exogenous state, $u$ is an i.i.d. shock that occurs between periods. The transition probability from current exogenous state $z$ to next-period exogenous state $z'$ is denoted by $\pi_z(z,z')$. $V$ is the value function. For finite horizon problems there are $N_j$ periods, indexed by $j$.
 
 Throughout, $D(\cdot)$ denotes the set of feasible choices conditional on the current states.
