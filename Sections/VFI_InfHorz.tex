@@ -1,5 +1,5 @@
 \subsection{Infinite Horizon: decision variable, markov shock}
-Starting from an initial guess for the value function, we iterate on the value function until convergence. To speed things up Howards improvement is used.
+Starting from an initial guess for the value function, we iterate on the value function until convergence. To speed things up Howards improvement is used (Section \ref{sec:howards}), and when the discount factor is high, endogenous VFI is used (Section \ref{sec:endovfi}).
 \begin{algorithmic}
  \State Declare initial value $V_0$.
  \State Declare iteration count $n=0$.
@@ -22,9 +22,56 @@ Starting from an initial guess for the value function, we iterate on the value f
 \end{algorithmic}
 Note that by making the outer-loop over $z$ we are able to reduce the number of times we compute the expectations (which depend on $z$ and not on $a$).
 
-Howards improvement algorithm is to use the current policy to evaluate/update the value function a couple of times. This is faster as it skips the maximization step (which is computationally the most costly) and because the policy function typically is 'pointing' in the direction of the solution, so a few cheap computations to move further in this direction is worthwhile. $UseHowards$ is implemented as conditions under which Howards improvement algorithm should be used (which can be controlled using $vfoptions$. $nHowards$ is set to 80 by default (based on a trying out a bunch of different values, this seemed to be best at speeding up the 'average' problem). In practice, we avoid using Howards improvement algorithm for the first few iterations (as the initial guess is likely poor, and so Howards does not much help), and also stop using Howards improvement algorithm once we are within one order of magnitude of convergence of the value function.\footnote{This is because otherwise Howards leads to very small errors. You won't notice them normally, but when trying to compute a placebo transition path between stationary equilibria they are problematic as the transition won't use Howards and so tries to go to a very slightly different place. If you are thinking 'but I saw the proof in Sargent \& Stachurski that Howards is fine and gives same answer' the trick is that the last line of their proof assumes that Howards evaluates the 'policy greedy' value function, but in practice you will never do this. (Placebo transition=a transition path in which nothing changes, this is actually quite a demanding test of accuracy; this is not a dig at S\&S, all textbooks do the same.)}
+\subsubsection{Howards improvement: iterated and greedy} \label{sec:howards}
+Write $F_{g}(a,z)=F(g^{d}(a,z),g^{a'}(a,z),a,z)$ for the return under policy $g$, and $P_{g}$ for the transition matrix on $(a,z)$ that policy $g$ implies, so $(P_{g}V)(a,z)=\sum_{z'} V(g^{a'}(a,z),z')\pi_z(z,z')$. The value of following policy $g$ forever is the solution to $V=F_g+\beta P_g V$. There are two versions of Howards, set by \textit{vfoptions.howardsgreedy}.\footnote{\cite{Rendahl2022}, \cite{BakotaKredler2022} and \cite{PhelanEslami2022} are relevant literature that discusses these ideas in more depth.}
 
-A couple of hints to how this could be done better (the kind of improvements that work for just about any algorithm, rather than things like using endogenous grid method instead of pure discretization): ideally it would use the improved versions of Howards developed in \cite{Rendahl2022}, \cite{BakotaKredler2022} and \cite{PhelanEslami2022} (I've not tried these). And it would use relative VFI, or even endogenous VFI (for these latter two, they were tried but don't work in VFI Toolkit because of the pure discretization);  \cite{Bray2017}.
+\textbf{Iterated Howards} (\textit{vfoptions.howardsgreedy=0}, the default; a.k.a.\ modified policy function iteration) applies the policy's Bellman equation a fixed number of times,
+\begin{algorithmic}
+ \For $nHowards$ number of times
+  \State Update $V_n(a,z)=F_{g_n}(a,z)+\beta \sum_{z'} V_n(g^{a'}_n(a,z),z')\pi_z(z,z')$
+ \EndFor
+\end{algorithmic}
+$nHowards$ is \textit{vfoptions.howards}. Its default depends on the discount factor, as the best number of Howards steps grows roughly like $1/(1-\beta)$ (except when endogenous VFI is being used, Section \ref{sec:endovfi}, where the best number barely depends on $\beta$). The defaults come from runtimes in the VFI Toolkit test bank (\textit{CoreInfHorzVFIAlgoTests}). If the discount factor depends on the exogenous state, the default uses its largest value. There are two implementations of the same update, set by \textit{vfoptions.howardssparse}: one indexes $V_n$ at $g^{a'}_n(a,z)$, the other builds $P_{g_n}$ as a sparse matrix once and then does $nHowards$ sparse matrix-vector products. They give the same answer. The sparse version is faster when there are many exogenous states, and with the grid interpolation layer.
+
+\textbf{Greedy Howards} (\textit{vfoptions.howardsgreedy=1}; a.k.a.\ policy function iteration) instead solves for the value of following $g_n$ forever, which is the limit of iterated Howards as $nHowards\to \infty$,
+\begin{algorithmic}
+ \State Construct the sparse matrix $P_{g_n}$ and the vector $F_{g_n}$
+ \State Solve the linear system $(I-\beta P_{g_n})V_n=F_{g_n}$ \Comment a sparse direct solve, $V_n=(I-\beta P_{g_n})^{-1}F_{g_n}$
+\end{algorithmic}
+Each greedy step costs much more than an iterated Howards step, but far fewer iterations are needed. Greedy Howards is implemented without a $d$ variable; with a $d$ variable it works through the refinement (Section \ref{sec:refine}), which removes $d$ before iterating.
+
+If some states have $V=-\infty$ (e.g., no feasible choice), the linear solve has to be done on the 'live' states only (in floating point, a single $-\infty$ in $F_{g_n}$ makes the solution $NaN$ everywhere). A state is 'dead' if $V_n=-\infty$ there, or if its policy puts positive probability on a dead state (repeated until no new states are added). Ordering the states live-then-dead makes $(I-\beta P_{g_n})$ block triangular, so we solve the live block on its own and set $V_n=-\infty$ on the dead states.
+
+Howards improvement algorithm is to use the current policy to evaluate/update the value function a couple of times. This is faster as it skips the maximization step (which is computationally the most costly) and because the policy function typically is 'pointing' in the direction of the solution, so a few cheap computations to move further in this direction is worthwhile. $UseHowards$ is the conditions under which Howards improvement algorithm is used, and is the same for iterated and greedy Howards: Howards is used in iteration $n$ when $||V_n-V_{n-1}||$ is finite, $||V_n-V_{n-1}||>10\times$\textit{vfoptions.tolerance}, and $n<$\textit{vfoptions.maxhowards}. So we skip Howards improvement algorithm in the first iteration (where $||V_n-V_{n-1}||$ is still infinite), stop using it after \textit{vfoptions.maxhowards} iterations (default 500; just so it cannot cause convergence to fail if things are going wrong), and also stop using Howards improvement algorithm once we are within one order of magnitude of convergence of the value function.\footnote{This is because otherwise Howards leads to very small errors. You won't notice them normally, but when trying to compute a placebo transition path between stationary equilibria they are problematic as the transition won't use Howards and so tries to go to a very slightly different place. If you are thinking 'but I saw the proof in Sargent \& Stachurski that Howards is fine and gives same answer' the trick is that the last line of their proof assumes that Howards evaluates the 'policy greedy' value function, but in practice you will never do this. (Placebo transition=a transition path in which nothing changes, this is actually quite a demanding test of accuracy; this is not a dig at S\&S, all textbooks do the same.)}
+
+Because Howards is switched off once we are within one order of magnitude of convergence, the last iteration is always a plain value function iteration step, without Howards.
+
+To summarise the current defaults: iterated Howards (\textit{vfoptions.howardsgreedy=0}); \textit{vfoptions.howards}$=round(2/(1-\beta))$ kept between 20 and 640, or 40 (80 with sparse Howards) when endogenous VFI is used; \textit{vfoptions.howardssparse=1} with the grid interpolation layer (other than \textit{vfoptions.preGI=1}, for which sparse is not implemented) and when $N_z\geq 50$ and $N_a\geq 500$, and 0 otherwise; \textit{vfoptions.maxhowards=500}; \textit{vfoptions.tolerance}$=10^{-9}$; and \textit{vfoptions.maxiter}$=10^4$.
+
+\subsubsection{Relative VFI and Endogenous VFI} \label{sec:endovfi}
+Value function iteration converges in levels at rate $\beta$, so when $\beta$ is close to one it is slow, however many Howards steps we take. But much of the error is in a part of $V$ that does not matter for the policy. Relative VFI \citep{Bray2019} and endogenous VFI \citep{Bray2017} exploit this. Both are set by \textit{vfoptions.relativevfi=1}; relative VFI is just the name for the case without $z$.
+
+The key observation is that if we add to $V$ some function of the exogenous state, $c(z)$, then the Bellman operator $T$ shifts the result by a function of $z$ only, and so the policy is unchanged,
+\begin{equation*}
+ T(V+c)(a,z)=TV(a,z)+\beta \sum_{z'}c(z')\pi_z(z,z').
+\end{equation*}
+So we only need to iterate until $V_n-V_{n-1}$ is constant across $a$ for each $z$ (rather than until it is zero), and we can then recover the level of $V$ by solving a small linear system in $z$. The iterations are exactly the same as in plain value function iteration (including Howards); only the stopping rule and a final 'level recovery' step change.
+\begin{algorithmic}
+ \State Declare initial value $V_0$.
+ \State Declare iteration count $n=0$.
+ \While {$max_z \left[ max_a (V_n(a,z)-V_{n-1}(a,z)) - min_a (V_n(a,z)-V_{n-1}(a,z)) \right]>$ 'tolerance constant'}
+   \State Increment $n$, and do one iteration of value function iteration (with Howards) exactly as above
+ \EndWhile
+ \State Calculate $\Delta(z)=mean_a [V_n(a,z)-V_{n-1}(a,z)]$ \Comment over the $a$ at which this is finite
+ \State Solve $c=\Delta+\beta\pi_z c$ for $c(z)$, so $c=(I-\beta\pi_z)^{-1}\Delta$ \Comment an $N_z$-by-$N_z$ linear system
+ \State Update $V_n(a,z)=V_n(a,z)+\beta \sum_{z'}c(z')\pi_z(z,z')$
+ \\ \Return $V_n$, $g_n$
+\end{algorithmic}
+The stopping rule is the span (max minus min) over $a$ of $V_n-V_{n-1}$, within each $z$. The level recovery works because the last iteration is a plain value function iteration step (Howards is switched off near convergence), so $V_n=T V_{n-1}$ and $V_n-V_{n-1}=\Delta(z)$ up to the tolerance; then $V_{n-1}+c$ is the fixed point of $T$, and $T(V_{n-1}+c)=V_n+\beta\pi_z c$. Without $z$ (relative VFI), $c=\Delta/(1-\beta)$ and the update is just $V_n=V_n+\beta\Delta/(1-\beta)$.
+
+Endogenous VFI does the same iterations as plain VFI, only with a different stopping rule, so its extra cost per iteration is just the span calculation (plus the final linear system, once). How much it saves depends on $\beta$: in the VFI Toolkit test bank the runtime of the best plain VFI relative to the best endogenous VFI (each with its best number of Howards steps) had a median of 0.96 at $\beta=0.9$, 1.15 at $\beta=0.95$, 1.4 at $\beta=0.97$, 2.3 at $\beta=0.99$ and 4 at $\beta=0.995$. So the default is \textit{vfoptions.relativevfi=1} when $\beta\geq 0.97$ (and 0 otherwise). With multiple discount factors, $\beta$ here is their product (the largest value of each, if one depends on the exogenous state).
+
+Endogenous VFI only works when $T(V+c)=TV+\beta\pi_z c$, which is not the case with Epstein-Zin preferences, ambiguity aversion, sophisticated quasi-hyperbolic discounting (naive quasi-hyperbolic is fine, as its continuation value is a standard VFI), or endogenous exit (the exit value does not shift with $V$). It is currently implemented for pure discretization and refinement, with and without the grid interpolation layer and semi-exogenous states, and only on the GPU.
 
 \subsubsection{Refinement} \label{sec:refine}
 If you set \textit{vfoptions.solnmethod = ‘purediscretization\_{}refinement’;} then the algorithm will be the 'refinement'. Refinement is based on the observation that $d$ does not enter the expectations next period value function, only the return function. So we can 'pre-solve',  choosing $d$ to maximize the return function $F(d,aprime,a,z)$ to get $d^{*}(aprime,a,z)$, the decision that maximizes the return function given $(aprime,a,z)$, and associated maximum values $F^{*}(aprime,a,z)$. We then perform standard value function iteration, but just using $F^{*}(aprime,a,z)$, so we have essentially removed $d$ from the problem on which we have to iterate. Once we finish solving we can put the optimal policy for $aprime$ into $d^{*}(aprime,a,z)$ to get the optimal policy for $d$. This is faster because we just pre-solve for $d$ once, and thereby avoid having to solve for it as part of every iteration.
